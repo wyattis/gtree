@@ -1,3 +1,3 @@
-module github.com/wyattis/tree
+module github.com/wyattis/gtree
 
 go 1.17
