@@ -5,81 +5,57 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
-type WalkFunc = func(name string, parts []string, depth int) error
+var block = NewSet()
+var format string
+var tab string
 
-type DirTree struct {
-	Name    string
-	IsChild bool
-	Roots   []*DirTree
-}
+var formatMap = map[string]string{
+	"zip":   "zip",
+	"apk":   "zip",
+	"docx":  "zip",
+	"xlsx":  "zip",
+	"ppsx":  "zip",
+	"pptx":  "zip",
+	"thmx":  "zip",
+	"pk3":   "zip",
+	"pk4":   "zip",
+	"usdz":  "zip",
+	"xpi":   "zip",
+	"mgz":   "zip",
+	"smzip": "zip",
 
-func (t *DirTree) AddParts(parts []string) {
-	if len(parts) == 0 {
-		return
-	}
-	var branch *DirTree
-	for _, b := range t.Roots {
-		if b.Name == parts[0] {
-			branch = b
-			break
-		}
-	}
-	if branch == nil {
-		branch = new(DirTree)
-		branch.Name = parts[0]
-		branch.IsChild = true
-		t.Roots = append(t.Roots, branch)
-	}
-	branch.AddParts(parts[1:])
-}
+	"gzip":     "gzip",
+	"gz":       "gzip",
+	"tgz":      "gzip",
+	"gnumeric": "gzip",
+	"adz":      "gzip",
+	"maf":      "gzip",
 
-func (t *DirTree) AddPath(path string) {
-	parts := strings.Split(filepath.ToSlash(filepath.Clean(path)), "/")
-	if len(parts) == 0 {
-		return
-	}
-	t.AddParts(parts)
-}
-
-func (t *DirTree) walkDepthRecursive(hand WalkFunc, parts []string, depth int) (err error) {
-	for _, b := range t.Roots {
-		subParts := append([]string{}, parts...)
-		subParts = append(subParts, b.Name)
-		if err = hand(b.Name, subParts, depth); err != nil {
-			return
-		}
-		if err = b.walkDepthRecursive(hand, subParts, depth+1); err != nil {
-			return
-		}
-	}
-	return
-}
-
-func (t *DirTree) WalkDepth(hand WalkFunc) error {
-	parts := []string{}
-	return t.walkDepthRecursive(hand, parts, 0)
-}
-
-func (t *DirTree) Sort() {
-	sort.Slice(t.Roots, func(a, b int) bool {
-		return strings.Compare(t.Roots[a].Name, t.Roots[b].Name) < 0
-	})
-	for i := range t.Roots {
-		t.Roots[i].Sort()
-	}
+	"dir": "dir",
 }
 
 func run(path string) (err error) {
-	ext := filepath.Ext(path)
+	if format == "" {
+		ext := strings.TrimSpace(filepath.Ext(path))
+		if ext == "" || ext == "." {
+			format = "dir"
+		} else {
+			format = ext[1:]
+		}
+	}
 	var tree *DirTree
-	switch ext {
-	case ".zip":
+	f, ok := formatMap[format]
+	if !ok {
+		return fmt.Errorf("unsupported format: %s", format)
+	}
+	switch f {
+	case "zip":
 		tree, err = doZip(path)
 	default:
 		tree, err = doDirectory(path)
@@ -91,7 +67,11 @@ func run(path string) (err error) {
 }
 
 func doDirectory(path string) (tree *DirTree, err error) {
-
+	tree = new(DirTree)
+	err = filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+		tree.AddPath(path)
+		return nil
+	})
 	return
 }
 
@@ -110,13 +90,16 @@ func doZip(path string) (tree *DirTree, err error) {
 func printTree(w io.Writer, tree *DirTree) (err error) {
 	tree.Sort()
 	return tree.WalkDepth(func(name string, parts []string, depth int) (err error) {
-		padding := strings.Repeat(" ", depth*2)
+		padding := strings.Repeat(tab, depth)
 		_, err = fmt.Fprintf(w, "%s%s\n", padding, name)
 		return
 	})
 }
 
 func main() {
+	flag.StringVar(&format, "f", "", "specify the format for the input (dir,zip,gzip)")
+	flag.Var(block, "b", "specify paths to block")
+	flag.StringVar(&tab, "tab", "  ", "what characters to use as a tab for each level")
 	flag.Parse()
 	for _, f := range flag.Args() {
 		if err := run(f); err != nil {
